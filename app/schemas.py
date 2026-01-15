@@ -21,6 +21,11 @@ class DepositAccountResponse(BaseModel):
     accrued_interest: Decimal
 
 
+class DepositAccountListResponse(BaseModel):
+    total: int
+    items: list[DepositAccountResponse]
+
+
 class MoneyRequest(BaseModel):
     amount: Decimal = Field(..., gt=Decimal("0"))
     effective_date: dt.date
@@ -43,6 +48,11 @@ class WebhookSubscriptionResponse(BaseModel):
     id: str
     target_url: str
     enabled: bool
+
+
+class WebhookSubscriptionListResponse(BaseModel):
+    total: int
+    items: list[WebhookSubscriptionResponse]
 
 
 class DispatchOutboxRequest(BaseModel):
@@ -72,3 +82,59 @@ class LoanAccountResponse(BaseModel):
     day_count_basis: int
     outstanding_principal: Decimal
     accrued_interest: Decimal
+
+
+class LoanAccountListResponse(BaseModel):
+    total: int
+    items: list[LoanAccountResponse]
+
+
+class OutboxMessageResponse(BaseModel):
+    id: str
+    created_at: dt.datetime
+    event_id: str
+    destination: str
+    status: str
+    attempts: int
+    max_attempts: int
+    next_attempt_at: dt.datetime | None
+    last_error: str | None
+
+
+class OutboxMessageListResponse(BaseModel):
+    total: int
+    items: list[OutboxMessageResponse]
+
+
+class DomainEventResponse(BaseModel):
+    id: str
+    created_at: dt.datetime
+    aggregate_type: str
+    aggregate_id: str
+    event_type: str
+    event_time: dt.datetime
+    payload: dict
+    idempotency_key: str | None
+
+
+class DomainEventListResponse(BaseModel):
+    total: int
+    items: list[DomainEventResponse]
+
+
+class LedgerEntryResponse(BaseModel):
+    id: str
+    created_at: dt.datetime
+    effective_date: dt.date
+    account_type: str
+    account_id: str
+    txn_id: str
+    description: str
+    debit_account: str
+    credit_account: str
+    amount: Decimal
+
+
+class LedgerEntryListResponse(BaseModel):
+    total: int
+    items: list[LedgerEntryResponse]

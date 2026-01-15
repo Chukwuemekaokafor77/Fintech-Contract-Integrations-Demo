@@ -1,0 +1,1013 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fintech Platform Demo UI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-slate-50 text-slate-900">
+    <div class="min-h-screen">
+      <header class="border-b bg-white">
+        <div class="mx-auto max-w-7xl px-4 py-4 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="h-9 w-9 rounded-lg bg-slate-900"></div>
+            <div>
+              <div class="text-sm font-semibold">Fintech Contract Integrations Demo</div>
+              <div class="text-xs text-slate-500">No-build UI served by FastAPI</div>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <input id="apiBase" class="w-80 rounded-lg border px-3 py-2 text-sm" placeholder="API base URL" />
+            <button id="saveApiBase" class="rounded-lg bg-slate-900 px-3 py-2 text-sm text-white">Save</button>
+          </div>
+        </div>
+      </header>
+
+      <div class="mx-auto max-w-7xl px-4 py-6">
+        <nav class="flex flex-wrap gap-2">
+          <a class="nav-link" href="#/">Dashboard</a>
+          <a class="nav-link" href="#/deposit">Deposit Accounts</a>
+          <a class="nav-link" href="#/loan">Loan Accounts</a>
+          <a class="nav-link" href="#/integrations">Integrations</a>
+        </nav>
+
+        <main id="app" class="mt-6"></main>
+
+        <footer class="mt-10 border-t pt-4 text-xs text-slate-500">
+          Tip: run backend (`uvicorn app.main:app --reload --port 8001`) then open <span class="font-mono">/ui</span>.
+        </footer>
+      </div>
+    </div>
+
+    <script type="module">
+      const DEFAULT_API_BASE = "http://127.0.0.1:8001";
+
+      function getApiBase() {
+        return localStorage.getItem("apiBase") || DEFAULT_API_BASE;
+      }
+
+      function setApiBase(v) {
+        localStorage.setItem("apiBase", v);
+      }
+
+      const apiBaseInput = document.getElementById("apiBase");
+      const saveApiBaseBtn = document.getElementById("saveApiBase");
+      apiBaseInput.value = getApiBase();
+      saveApiBaseBtn.addEventListener("click", () => {
+        const v = apiBaseInput.value.trim() || DEFAULT_API_BASE;
+        setApiBase(v);
+        toast(`Saved API base: ${v}`);
+      });
+
+      function el(html) {
+        const t = document.createElement("template");
+        t.innerHTML = html.trim();
+        return t.content.firstElementChild;
+      }
+
+      function fmtMoney(s) {
+        if (s === null || s === undefined) return "-";
+        const n = Number(s);
+        if (Number.isFinite(n)) return n.toFixed(2);
+        return String(s);
+      }
+
+      function fmtDateTime(s) {
+        if (!s) return "-";
+        const d = new Date(s);
+        if (Number.isNaN(d.getTime())) return String(s);
+        return d.toLocaleString();
+      }
+
+      function uuid() {
+        if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+        return "id-" + Math.random().toString(16).slice(2) + "-" + Date.now();
+      }
+
+      function toast(message, kind = "info") {
+        const root = document.getElementById("toast-root") || (() => {
+          const n = el('<div id="toast-root" class="fixed right-4 top-4 z-50 space-y-2"></div>');
+          document.body.appendChild(n);
+          return n;
+        })();
+
+        const color = kind === "error" ? "bg-rose-600" : kind === "success" ? "bg-emerald-600" : "bg-slate-900";
+        const item = el(`<div class="${color} text-white shadow-lg rounded-lg px-4 py-3 text-sm max-w-md">${escapeHtml(message)}</div>`);
+        root.appendChild(item);
+        setTimeout(() => item.remove(), 3500);
+      }
+
+      function escapeHtml(s) {
+        return String(s)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
+      async function api(path, { method = "GET", query, body } = {}) {
+        const url = new URL(getApiBase() + path);
+        if (query) {
+          for (const [k, v] of Object.entries(query)) {
+            if (v === undefined || v === null || v === "") continue;
+            url.searchParams.set(k, String(v));
+          }
+        }
+
+        const res = await fetch(url, {
+          method,
+          headers: body ? { "Content-Type": "application/json" } : undefined,
+          body: body ? JSON.stringify(body) : undefined,
+        });
+
+        let data;
+        const ct = res.headers.get("content-type") || "";
+        if (ct.includes("application/json")) {
+          data = await res.json();
+        } else {
+          data = await res.text();
+        }
+
+        if (!res.ok) {
+          const msg = typeof data === "string" ? data : data?.detail || JSON.stringify(data);
+          throw new Error(msg);
+        }
+
+        return data;
+      }
+
+      function navStyles() {
+        document.querySelectorAll(".nav-link").forEach((a) => {
+          a.className = "nav-link rounded-lg px-3 py-2 text-sm border bg-white hover:bg-slate-50";
+        });
+
+        const hash = location.hash || "#/";
+        const active = document.querySelector(`.nav-link[href="${hash.split("?")[0]}"]`);
+        if (active) active.className = "nav-link rounded-lg px-3 py-2 text-sm border bg-slate-900 text-white";
+      }
+
+      function parseRoute() {
+        const raw = (location.hash || "#/").slice(1);
+        const [path, qs] = raw.split("?");
+        const params = new URLSearchParams(qs || "");
+        return { path: path || "/", params };
+      }
+
+      function setHash(path, params) {
+        const qs = params ? `?${params.toString()}` : "";
+        location.hash = `#${path}${qs}`;
+      }
+
+      const appRoot = document.getElementById("app");
+
+      function card(title, value, subtitle) {
+        return el(`
+          <div class="rounded-xl border bg-white p-4">
+            <div class="text-xs text-slate-500">${escapeHtml(title)}</div>
+            <div class="mt-2 text-2xl font-semibold">${escapeHtml(value)}</div>
+            <div class="mt-1 text-xs text-slate-500">${escapeHtml(subtitle || "")}</div>
+          </div>
+        `);
+      }
+
+      function section(title, right) {
+        const h = el(`<div class="flex items-center justify-between">
+          <h2 class="text-lg font-semibold">${escapeHtml(title)}</h2>
+          <div></div>
+        </div>`);
+        if (right) h.lastElementChild.appendChild(right);
+        return h;
+      }
+
+      function button(label, { kind = "primary", onClick, className = "" } = {}) {
+        const base = "rounded-lg px-3 py-2 text-sm";
+        const styles = kind === "primary"
+          ? "bg-slate-900 text-white hover:bg-slate-800"
+          : kind === "danger"
+            ? "bg-rose-600 text-white hover:bg-rose-500"
+            : "bg-white border hover:bg-slate-50";
+        const b = el(`<button class="${base} ${styles} ${className}">${escapeHtml(label)}</button>`);
+        if (onClick) b.addEventListener("click", onClick);
+        return b;
+      }
+
+      function input({ placeholder, value = "", type = "text", className = "" } = {}) {
+        const i = el(`<input class="rounded-lg border px-3 py-2 text-sm w-full ${className}" placeholder="${escapeHtml(placeholder || "")}" />`);
+        i.type = type;
+        i.value = value;
+        return i;
+      }
+
+      function field(label, control) {
+        const wrap = el(`<label class="block">
+          <div class="text-xs font-medium text-slate-600">${escapeHtml(label)}</div>
+          <div class="mt-1"></div>
+        </label>`);
+        wrap.lastElementChild.appendChild(control);
+        return wrap;
+      }
+
+      function table(headers, rows) {
+        const t = el(`<div class="overflow-auto rounded-xl border bg-white">
+          <table class="min-w-full text-sm">
+            <thead class="bg-slate-50">
+              <tr></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>`);
+
+        const trh = t.querySelector("thead tr");
+        for (const h of headers) {
+          trh.appendChild(el(`<th class="px-3 py-2 text-left text-xs font-semibold text-slate-600">${escapeHtml(h)}</th>`));
+        }
+
+        const tb = t.querySelector("tbody");
+        for (const r of rows) {
+          const tr = document.createElement("tr");
+          tr.className = "border-t";
+          for (const c of r) {
+            const td = document.createElement("td");
+            td.className = "px-3 py-2";
+            if (c instanceof Node) td.appendChild(c);
+            else td.innerHTML = escapeHtml(String(c));
+            tr.appendChild(td);
+          }
+          tb.appendChild(tr);
+        }
+
+        return t;
+      }
+
+      function pager({ total, limit, offset, onChange }) {
+        const page = Math.floor(offset / limit) + 1;
+        const pages = Math.max(1, Math.ceil(total / limit));
+        const wrap = el(`<div class="flex items-center justify-between text-sm">
+          <div class="text-slate-600">Total: <span class="font-semibold">${total}</span> | Page <span class="font-semibold">${page}</span> / <span class="font-semibold">${pages}</span></div>
+          <div class="flex gap-2"></div>
+        </div>`);
+        const actions = wrap.lastElementChild;
+        const prev = button("Prev", { kind: "secondary", onClick: () => onChange(Math.max(0, offset - limit)) });
+        const next = button("Next", { kind: "secondary", onClick: () => onChange(Math.min((pages - 1) * limit, offset + limit)) });
+        prev.disabled = offset <= 0;
+        next.disabled = offset + limit >= total;
+        prev.className += prev.disabled ? " opacity-50 pointer-events-none" : "";
+        next.className += next.disabled ? " opacity-50 pointer-events-none" : "";
+        actions.appendChild(prev);
+        actions.appendChild(next);
+        return wrap;
+      }
+
+      async function renderDashboard() {
+        const container = el(`<div class="space-y-6"></div>`);
+
+        const top = el(`<div class="grid grid-cols-1 md:grid-cols-4 gap-4"></div>`);
+        container.appendChild(section("Dashboard"));
+        container.appendChild(top);
+
+        try {
+          const [dep, loan, subs, outbox] = await Promise.all([
+            api("/deposit/accounts", { query: { limit: 1, offset: 0 } }),
+            api("/loan/accounts", { query: { limit: 1, offset: 0 } }),
+            api("/webhooks/subscriptions", { query: { limit: 1, offset: 0 } }),
+            api("/outbox/messages", { query: { limit: 1, offset: 0 } }),
+          ]);
+          top.appendChild(card("Deposit Accounts", String(dep.total), "Open deposit products"));
+          top.appendChild(card("Loan Accounts", String(loan.total), "Open loan products"));
+          top.appendChild(card("Webhook Subscriptions", String(subs.total), "Outbound delivery targets"));
+          top.appendChild(card("Outbox Messages", String(outbox.total), "Pending + delivered + failed"));
+        } catch (e) {
+          top.appendChild(card("API", "Error", e.message || String(e)));
+        }
+
+        const actionsRow = el(`<div class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>`);
+        container.appendChild(actionsRow);
+
+        const demoCard = el(`<div class="rounded-xl border bg-white p-4 space-y-3"></div>`);
+        demoCard.appendChild(el(`<div class="text-sm font-semibold">Demo Flow</div>`));
+        demoCard.appendChild(el(`<div class="text-xs text-slate-500">One-click helpers to generate data quickly.</div>`));
+
+        const openDep = button("Open Deposit Account", {
+          onClick: async () => {
+            const idk = uuid();
+            const body = {
+              opened_on: new Date().toISOString().slice(0, 10),
+              annual_interest_rate: "0.0500",
+              day_count_basis: "ACT/365",
+              idempotency_key: idk,
+            };
+            const res = await api("/deposit/accounts", { method: "POST", body });
+            toast(`Deposit opened: ${res.id}`, "success");
+            setHash("/deposit", new URLSearchParams());
+          },
+        });
+
+        const openLoan = button("Open Loan Account", {
+          onClick: async () => {
+            const idk = uuid();
+            const body = {
+              opened_on: new Date().toISOString().slice(0, 10),
+              principal: "1000.00",
+              annual_interest_rate: "0.1200",
+              day_count_basis: "ACT/365",
+              idempotency_key: idk,
+            };
+            const res = await api("/loan/accounts", { method: "POST", body });
+            toast(`Loan opened: ${res.id}`, "success");
+            setHash("/loan", new URLSearchParams());
+          },
+        });
+
+        const dispatch = button("Dispatch Outbox", {
+          kind: "secondary",
+          onClick: async () => {
+            const res = await api("/outbox/dispatch", { method: "POST", body: { max_messages: 50 } });
+            toast(`Dispatched: ${res.dispatched || 0}`, "success");
+            setHash("/integrations", new URLSearchParams());
+          },
+        });
+
+        const replay = button("Replay Outbox (reset failed/dead)", {
+          kind: "secondary",
+          onClick: async () => {
+            const res = await api("/outbox/replay", {
+              method: "POST",
+              body: { status: "FAILED", destination: null, max_messages: 100 },
+            });
+            toast(`Replayed: ${res.reset || 0}`, "success");
+            setHash("/integrations", new URLSearchParams());
+          },
+        });
+
+        const row = el(`<div class="flex flex-wrap gap-2"></div>`);
+        row.appendChild(openDep);
+        row.appendChild(openLoan);
+        row.appendChild(dispatch);
+        row.appendChild(replay);
+        demoCard.appendChild(row);
+
+        const tips = el(`<div class="text-xs text-slate-500">
+          Suggested flow: open account → deposit/withdraw → accrue → month-end → create webhook → dispatch → view outbox/events/ledger.
+        </div>`);
+        demoCard.appendChild(tips);
+
+        const quickLinks = el(`<div class="rounded-xl border bg-white p-4 space-y-3"></div>`);
+        quickLinks.appendChild(el(`<div class="text-sm font-semibold">Quick Links</div>`));
+        const links = el(`<div class="flex flex-wrap gap-2"></div>`);
+        links.appendChild(button("Deposit", { kind: "secondary", onClick: () => setHash("/deposit") }));
+        links.appendChild(button("Loan", { kind: "secondary", onClick: () => setHash("/loan") }));
+        links.appendChild(button("Integrations", { kind: "secondary", onClick: () => setHash("/integrations") }));
+        quickLinks.appendChild(links);
+
+        actionsRow.appendChild(demoCard);
+        actionsRow.appendChild(quickLinks);
+
+        return container;
+      }
+
+      async function renderDepositList(params) {
+        const limit = Number(params.get("limit") || 20);
+        const offset = Number(params.get("offset") || 0);
+
+        const container = el(`<div class="space-y-4"></div>`);
+
+        const right = el(`<div class="flex gap-2"></div>`);
+        right.appendChild(button("New Account", { onClick: () => setHash("/deposit/new") }));
+        container.appendChild(section("Deposit Accounts", right));
+
+        let data;
+        try {
+          data = await api("/deposit/accounts", { query: { limit, offset } });
+        } catch (e) {
+          container.appendChild(el(`<div class="rounded-xl border bg-white p-4 text-sm text-rose-700">${escapeHtml(e.message || String(e))}</div>`));
+          return container;
+        }
+
+        container.appendChild(pager({
+          total: data.total,
+          limit,
+          offset,
+          onChange: (newOffset) => {
+            const p = new URLSearchParams(params);
+            p.set("limit", String(limit));
+            p.set("offset", String(newOffset));
+            setHash("/deposit", p);
+          },
+        }));
+
+        const rows = data.items.map((a) => {
+          const view = button("View", { kind: "secondary", onClick: () => setHash(`/deposit/${a.id}`) });
+          return [
+            a.id,
+            fmtMoney(a.balance),
+            String(a.status || ""),
+            String(a.day_count_basis || ""),
+            String(a.annual_interest_rate || ""),
+            fmtDateTime(a.created_at),
+            view,
+          ];
+        });
+
+        container.appendChild(
+          table(
+            ["ID", "Balance", "Status", "Basis", "Rate", "Created", ""],
+            rows,
+          ),
+        );
+
+        return container;
+      }
+
+      function renderDepositCreate() {
+        const container = el(`<div class="space-y-4"></div>`);
+        container.appendChild(section("Open Deposit Account"));
+
+        const form = el(`<div class="rounded-xl border bg-white p-4 space-y-4"></div>`);
+
+        const openedOn = input({ type: "date", value: new Date().toISOString().slice(0, 10) });
+        const rate = input({ placeholder: "0.0500", value: "0.0500" });
+        const basis = input({ placeholder: "ACT/365", value: "ACT/365" });
+        const idem = input({ placeholder: "idempotency_key", value: uuid() });
+
+        form.appendChild(el(`<div class="grid grid-cols-1 md:grid-cols-4 gap-3"></div>`));
+        const grid = form.firstElementChild;
+        grid.appendChild(field("Opened on", openedOn));
+        grid.appendChild(field("Annual interest rate", rate));
+        grid.appendChild(field("Day count basis", basis));
+        grid.appendChild(field("Idempotency key", idem));
+
+        const actions = el(`<div class="flex gap-2"></div>`);
+        actions.appendChild(button("Create", {
+          onClick: async () => {
+            try {
+              const res = await api("/deposit/accounts", {
+                method: "POST",
+                body: {
+                  opened_on: openedOn.value,
+                  annual_interest_rate: rate.value,
+                  day_count_basis: basis.value,
+                  idempotency_key: idem.value,
+                },
+              });
+              toast(`Created: ${res.id}`, "success");
+              setHash(`/deposit/${res.id}`);
+            } catch (e) {
+              toast(e.message || String(e), "error");
+            }
+          },
+        }));
+        actions.appendChild(button("Back", { kind: "secondary", onClick: () => history.back() }));
+        form.appendChild(actions);
+
+        container.appendChild(form);
+        return container;
+      }
+
+      async function renderDepositDetail(accountId) {
+        const container = el(`<div class="space-y-4"></div>`);
+
+        const right = el(`<div class="flex gap-2"></div>`);
+        right.appendChild(button("Back to list", { kind: "secondary", onClick: () => setHash("/deposit") }));
+        container.appendChild(section(`Deposit Account: ${accountId}`, right));
+
+        let acct;
+        try {
+          acct = await api(`/deposit/accounts/${accountId}`);
+        } catch (e) {
+          container.appendChild(el(`<div class="rounded-xl border bg-white p-4 text-sm text-rose-700">${escapeHtml(e.message || String(e))}</div>`));
+          return container;
+        }
+
+        const summary = el(`<div class="grid grid-cols-1 md:grid-cols-4 gap-4"></div>`);
+        summary.appendChild(card("Balance", fmtMoney(acct.balance), "Current"));
+        summary.appendChild(card("Status", String(acct.status || ""), "Account state"));
+        summary.appendChild(card("Rate", String(acct.annual_interest_rate || ""), "Annual"));
+        summary.appendChild(card("Day count", String(acct.day_count_basis || ""), "Basis"));
+        container.appendChild(summary);
+
+        const actions = el(`<div class="rounded-xl border bg-white p-4 space-y-4"></div>`);
+        actions.appendChild(el(`<div class="text-sm font-semibold">Actions</div>`));
+
+        const amount = input({ placeholder: "100.00", value: "100.00" });
+        const eff = input({ type: "date", value: new Date().toISOString().slice(0, 10) });
+        const idem = input({ placeholder: "idempotency_key", value: uuid() });
+        const note = input({ placeholder: "note", value: "demo" });
+
+        actions.appendChild(el(`<div class="grid grid-cols-1 md:grid-cols-4 gap-3"></div>`));
+        const grid = actions.querySelector("div.grid");
+        grid.appendChild(field("Amount", amount));
+        grid.appendChild(field("Effective date", eff));
+        grid.appendChild(field("Idempotency key", idem));
+        grid.appendChild(field("Note", note));
+
+        const btns = el(`<div class="flex flex-wrap gap-2"></div>`);
+        btns.appendChild(button("Deposit", {
+          onClick: async () => {
+            try {
+              await api(`/deposit/accounts/${accountId}/deposit`, {
+                method: "POST",
+                body: { amount: amount.value, effective_date: eff.value, idempotency_key: idem.value, note: note.value },
+              });
+              toast("Deposit posted", "success");
+              setHash(`/deposit/${accountId}`);
+            } catch (e) {
+              toast(e.message || String(e), "error");
+            }
+          },
+        }));
+
+        btns.appendChild(button("Withdraw", {
+          kind: "secondary",
+          onClick: async () => {
+            try {
+              await api(`/deposit/accounts/${accountId}/withdraw`, {
+                method: "POST",
+                body: { amount: amount.value, effective_date: eff.value, idempotency_key: idem.value, note: note.value },
+              });
+              toast("Withdrawal posted", "success");
+              setHash(`/deposit/${accountId}`);
+            } catch (e) {
+              toast(e.message || String(e), "error");
+            }
+          },
+        }));
+
+        btns.appendChild(button("Accrue Interest", {
+          kind: "secondary",
+          onClick: async () => {
+            try {
+              await api(`/deposit/accounts/${accountId}/accrue`, { method: "POST", body: { as_of_date: eff.value } });
+              toast("Interest accrued", "success");
+              setHash(`/deposit/${accountId}`);
+            } catch (e) {
+              toast(e.message || String(e), "error");
+            }
+          },
+        }));
+
+        btns.appendChild(button("Month-End", {
+          kind: "secondary",
+          onClick: async () => {
+            try {
+              await api(`/deposit/accounts/${accountId}/month-end`, { method: "POST", body: { month_end_date: eff.value } });
+              toast("Month-end applied", "success");
+              setHash(`/deposit/${accountId}`);
+            } catch (e) {
+              toast(e.message || String(e), "error");
+            }
+          },
+        }));
+
+        actions.appendChild(btns);
+        container.appendChild(actions);
+
+        const related = el(`<div class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>`);
+        container.appendChild(related);
+
+        const ledgerBox = el(`<div class="space-y-2"></div>`);
+        ledgerBox.appendChild(el(`<div class="text-sm font-semibold">Ledger (filtered)</div>`));
+        try {
+          const led = await api("/ledger", { query: { limit: 50, offset: 0, account_id: accountId } });
+          const rows = led.items.map((x) => [x.id, x.account_type, x.account_id, x.entry_type, fmtMoney(x.amount), x.txn_id, String(x.effective_date), fmtDateTime(x.created_at)]);
+          ledgerBox.appendChild(table(["ID", "Type", "Account", "Entry", "Amount", "Txn", "Eff", "Created"], rows));
+        } catch (e) {
+          ledgerBox.appendChild(el(`<div class="rounded-xl border bg-white p-3 text-sm text-rose-700">${escapeHtml(e.message || String(e))}</div>`));
+        }
+
+        const eventsBox = el(`<div class="space-y-2"></div>`);
+        eventsBox.appendChild(el(`<div class="text-sm font-semibold">Domain Events (filtered)</div>`));
+        try {
+          const ev = await api("/events", { query: { limit: 50, offset: 0, aggregate_id: accountId } });
+          const rows = ev.items.map((x) => [x.id, x.aggregate_type, x.aggregate_id, x.event_type, x.idempotency_key || "", fmtDateTime(x.created_at)]);
+          eventsBox.appendChild(table(["ID", "AggType", "AggId", "Type", "Idem", "Created"], rows));
+        } catch (e) {
+          eventsBox.appendChild(el(`<div class="rounded-xl border bg-white p-3 text-sm text-rose-700">${escapeHtml(e.message || String(e))}</div>`));
+        }
+
+        related.appendChild(eventsBox);
+        related.appendChild(ledgerBox);
+
+        return container;
+      }
+
+      async function renderLoanList(params) {
+        const limit = Number(params.get("limit") || 20);
+        const offset = Number(params.get("offset") || 0);
+
+        const container = el(`<div class="space-y-4"></div>`);
+
+        const right = el(`<div class="flex gap-2"></div>`);
+        right.appendChild(button("New Loan", { onClick: () => setHash("/loan/new") }));
+        container.appendChild(section("Loan Accounts", right));
+
+        let data;
+        try {
+          data = await api("/loan/accounts", { query: { limit, offset } });
+        } catch (e) {
+          container.appendChild(el(`<div class="rounded-xl border bg-white p-4 text-sm text-rose-700">${escapeHtml(e.message || String(e))}</div>`));
+          return container;
+        }
+
+        container.appendChild(pager({
+          total: data.total,
+          limit,
+          offset,
+          onChange: (newOffset) => {
+            const p = new URLSearchParams(params);
+            p.set("limit", String(limit));
+            p.set("offset", String(newOffset));
+            setHash("/loan", p);
+          },
+        }));
+
+        const rows = data.items.map((a) => {
+          const view = button("View", { kind: "secondary", onClick: () => setHash(`/loan/${a.id}`) });
+          return [
+            a.id,
+            fmtMoney(a.principal),
+            fmtMoney(a.outstanding_principal),
+            fmtMoney(a.accrued_interest),
+            String(a.status || ""),
+            String(a.annual_interest_rate || ""),
+            fmtDateTime(a.created_at),
+            view,
+          ];
+        });
+
+        container.appendChild(
+          table(
+            ["ID", "Principal", "Outstanding", "Accrued", "Status", "Rate", "Created", ""],
+            rows,
+          ),
+        );
+
+        return container;
+      }
+
+      function renderLoanCreate() {
+        const container = el(`<div class="space-y-4"></div>`);
+        container.appendChild(section("Open Loan Account"));
+
+        const form = el(`<div class="rounded-xl border bg-white p-4 space-y-4"></div>`);
+
+        const openedOn = input({ type: "date", value: new Date().toISOString().slice(0, 10) });
+        const principal = input({ placeholder: "1000.00", value: "1000.00" });
+        const rate = input({ placeholder: "0.1200", value: "0.1200" });
+        const basis = input({ placeholder: "ACT/365", value: "ACT/365" });
+        const idem = input({ placeholder: "idempotency_key", value: uuid() });
+
+        form.appendChild(el(`<div class="grid grid-cols-1 md:grid-cols-5 gap-3"></div>`));
+        const grid = form.firstElementChild;
+        grid.appendChild(field("Opened on", openedOn));
+        grid.appendChild(field("Principal", principal));
+        grid.appendChild(field("Annual interest rate", rate));
+        grid.appendChild(field("Day count basis", basis));
+        grid.appendChild(field("Idempotency key", idem));
+
+        const actions = el(`<div class="flex gap-2"></div>`);
+        actions.appendChild(button("Create", {
+          onClick: async () => {
+            try {
+              const res = await api("/loan/accounts", {
+                method: "POST",
+                body: {
+                  opened_on: openedOn.value,
+                  principal: principal.value,
+                  annual_interest_rate: rate.value,
+                  day_count_basis: basis.value,
+                  idempotency_key: idem.value,
+                },
+              });
+              toast(`Created: ${res.id}`, "success");
+              setHash(`/loan/${res.id}`);
+            } catch (e) {
+              toast(e.message || String(e), "error");
+            }
+          },
+        }));
+        actions.appendChild(button("Back", { kind: "secondary", onClick: () => history.back() }));
+        form.appendChild(actions);
+
+        container.appendChild(form);
+        return container;
+      }
+
+      async function renderLoanDetail(accountId) {
+        const container = el(`<div class="space-y-4"></div>`);
+
+        const right = el(`<div class="flex gap-2"></div>`);
+        right.appendChild(button("Back to list", { kind: "secondary", onClick: () => setHash("/loan") }));
+        container.appendChild(section(`Loan Account: ${accountId}`, right));
+
+        let acct;
+        try {
+          acct = await api(`/loan/accounts/${accountId}`);
+        } catch (e) {
+          container.appendChild(el(`<div class="rounded-xl border bg-white p-4 text-sm text-rose-700">${escapeHtml(e.message || String(e))}</div>`));
+          return container;
+        }
+
+        const summary = el(`<div class="grid grid-cols-1 md:grid-cols-4 gap-4"></div>`);
+        summary.appendChild(card("Principal", fmtMoney(acct.principal), "Original"));
+        summary.appendChild(card("Outstanding", fmtMoney(acct.outstanding_principal), "Principal due"));
+        summary.appendChild(card("Accrued Interest", fmtMoney(acct.accrued_interest), "Interest due"));
+        summary.appendChild(card("Status", String(acct.status || ""), "Account state"));
+        container.appendChild(summary);
+
+        const actions = el(`<div class="rounded-xl border bg-white p-4 space-y-4"></div>`);
+        actions.appendChild(el(`<div class="text-sm font-semibold">Actions</div>`));
+
+        const amount = input({ placeholder: "100.00", value: "100.00" });
+        const eff = input({ type: "date", value: new Date().toISOString().slice(0, 10) });
+        const idem = input({ placeholder: "idempotency_key", value: uuid() });
+        const note = input({ placeholder: "note", value: "demo" });
+
+        actions.appendChild(el(`<div class="grid grid-cols-1 md:grid-cols-4 gap-3"></div>`));
+        const grid = actions.querySelector("div.grid");
+        grid.appendChild(field("Amount", amount));
+        grid.appendChild(field("As-of date", eff));
+        grid.appendChild(field("Idempotency key", idem));
+        grid.appendChild(field("Note", note));
+
+        const btns = el(`<div class="flex flex-wrap gap-2"></div>`);
+        btns.appendChild(button("Accrue Interest", {
+          kind: "secondary",
+          onClick: async () => {
+            try {
+              await api(`/loan/accounts/${accountId}/accrue`, { method: "POST", body: { as_of_date: eff.value } });
+              toast("Interest accrued", "success");
+              setHash(`/loan/${accountId}`);
+            } catch (e) {
+              toast(e.message || String(e), "error");
+            }
+          },
+        }));
+
+        btns.appendChild(button("Repay", {
+          onClick: async () => {
+            try {
+              await api(`/loan/accounts/${accountId}/repay`, {
+                method: "POST",
+                body: { amount: amount.value, effective_date: eff.value, idempotency_key: idem.value, note: note.value },
+              });
+              toast("Repayment posted", "success");
+              setHash(`/loan/${accountId}`);
+            } catch (e) {
+              toast(e.message || String(e), "error");
+            }
+          },
+        }));
+
+        actions.appendChild(btns);
+        container.appendChild(actions);
+
+        const related = el(`<div class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>`);
+        container.appendChild(related);
+
+        const ledgerBox = el(`<div class="space-y-2"></div>`);
+        ledgerBox.appendChild(el(`<div class="text-sm font-semibold">Ledger (filtered)</div>`));
+        try {
+          const led = await api("/ledger", { query: { limit: 50, offset: 0, account_id: accountId } });
+          const rows = led.items.map((x) => [x.id, x.account_type, x.account_id, x.entry_type, fmtMoney(x.amount), x.txn_id, String(x.effective_date), fmtDateTime(x.created_at)]);
+          ledgerBox.appendChild(table(["ID", "Type", "Account", "Entry", "Amount", "Txn", "Eff", "Created"], rows));
+        } catch (e) {
+          ledgerBox.appendChild(el(`<div class="rounded-xl border bg-white p-3 text-sm text-rose-700">${escapeHtml(e.message || String(e))}</div>`));
+        }
+
+        const eventsBox = el(`<div class="space-y-2"></div>`);
+        eventsBox.appendChild(el(`<div class="text-sm font-semibold">Domain Events (filtered)</div>`));
+        try {
+          const ev = await api("/events", { query: { limit: 50, offset: 0, aggregate_id: accountId } });
+          const rows = ev.items.map((x) => [x.id, x.aggregate_type, x.aggregate_id, x.event_type, x.idempotency_key || "", fmtDateTime(x.created_at)]);
+          eventsBox.appendChild(table(["ID", "AggType", "AggId", "Type", "Idem", "Created"], rows));
+        } catch (e) {
+          eventsBox.appendChild(el(`<div class="rounded-xl border bg-white p-3 text-sm text-rose-700">${escapeHtml(e.message || String(e))}</div>`));
+        }
+
+        related.appendChild(eventsBox);
+        related.appendChild(ledgerBox);
+
+        return container;
+      }
+
+      async function renderIntegrations(params) {
+        const container = el(`<div class="space-y-6"></div>`);
+
+        const right = el(`<div class="flex gap-2"></div>`);
+        right.appendChild(button("Dispatch Outbox", {
+          kind: "secondary",
+          onClick: async () => {
+            try {
+              const res = await api("/outbox/dispatch", { method: "POST", body: { max_messages: 100 } });
+              toast(`Dispatched: ${res.dispatched || 0}`, "success");
+              setHash("/integrations");
+            } catch (e) {
+              toast(e.message || String(e), "error");
+            }
+          },
+        }));
+        right.appendChild(button("Replay", {
+          kind: "secondary",
+          onClick: async () => {
+            try {
+              const res = await api("/outbox/replay", { method: "POST", body: { status: replayStatus.value || null, destination: replayDest.value || null, max_messages: Number(replayMax.value || 100) } });
+              toast(`Reset: ${res.reset || 0}`, "success");
+              setHash("/integrations");
+            } catch (e) {
+              toast(e.message || String(e), "error");
+            }
+          },
+        }));
+
+        container.appendChild(section("Integrations", right));
+
+        const webhookBox = el(`<div class="rounded-xl border bg-white p-4 space-y-4"></div>`);
+        webhookBox.appendChild(el(`<div class="text-sm font-semibold">Webhook Subscriptions</div>`));
+
+        const targetUrl = input({ placeholder: "https://example.com/webhook", value: "https://example.com/webhook" });
+        const createSub = button("Create Subscription", {
+          onClick: async () => {
+            try {
+              const res = await api("/webhooks/subscriptions", { method: "POST", body: { target_url: targetUrl.value } });
+              toast(`Created subscription: ${res.id}`, "success");
+              setHash("/integrations");
+            } catch (e) {
+              toast(e.message || String(e), "error");
+            }
+          },
+        });
+
+        webhookBox.appendChild(el(`<div class="grid grid-cols-1 md:grid-cols-3 gap-3"></div>`));
+        const wgrid = webhookBox.querySelector("div.grid");
+        wgrid.appendChild(field("Target URL", targetUrl));
+        wgrid.appendChild(el(`<div class="md:pt-6"></div>`));
+        wgrid.lastElementChild.appendChild(createSub);
+
+        try {
+          const subs = await api("/webhooks/subscriptions", { query: { limit: 50, offset: 0 } });
+          const rows = subs.items.map((s) => [s.id, s.target_url, String(s.enabled)]);
+          webhookBox.appendChild(table(["ID", "Target", "Enabled"], rows));
+        } catch (e) {
+          webhookBox.appendChild(el(`<div class="text-sm text-rose-700">${escapeHtml(e.message || String(e))}</div>`));
+        }
+
+        container.appendChild(webhookBox);
+
+        const outboxBox = el(`<div class="rounded-xl border bg-white p-4 space-y-4"></div>`);
+        outboxBox.appendChild(el(`<div class="text-sm font-semibold">Outbox Messages</div>`));
+
+        const status = input({ placeholder: "PENDING / DELIVERED / FAILED / DEAD", value: params.get("status") || "" });
+        const dest = input({ placeholder: "destination", value: params.get("destination") || "" });
+        const aggType = input({ placeholder: "aggregate_type", value: params.get("aggregate_type") || "" });
+        const aggId = input({ placeholder: "aggregate_id", value: params.get("aggregate_id") || "" });
+
+        const applyFilters = button("Apply Filters", {
+          kind: "secondary",
+          onClick: () => {
+            const p = new URLSearchParams();
+            p.set("status", status.value);
+            p.set("destination", dest.value);
+            p.set("aggregate_type", aggType.value);
+            p.set("aggregate_id", aggId.value);
+            setHash("/integrations", p);
+          },
+        });
+
+        outboxBox.appendChild(el(`<div class="grid grid-cols-1 md:grid-cols-5 gap-3"></div>`));
+        const og = outboxBox.querySelector("div.grid");
+        og.appendChild(field("Status", status));
+        og.appendChild(field("Destination", dest));
+        og.appendChild(field("Aggregate Type", aggType));
+        og.appendChild(field("Aggregate ID", aggId));
+        og.appendChild(el(`<div class="md:pt-6"></div>`));
+        og.lastElementChild.appendChild(applyFilters);
+
+        const limit = 50;
+        const offset = 0;
+        try {
+          const msgs = await api("/outbox/messages", {
+            query: {
+              limit,
+              offset,
+              status: status.value || null,
+              destination: dest.value || null,
+              aggregate_type: aggType.value || null,
+              aggregate_id: aggId.value || null,
+            },
+          });
+          outboxBox.appendChild(el(`<div class="text-xs text-slate-500">Total: ${msgs.total}</div>`));
+          const rows = msgs.items.map((m) => [m.id, m.destination, m.status, m.attempts, fmtDateTime(m.next_attempt_at), fmtDateTime(m.last_attempt_at), m.last_error || "", m.event_id]);
+          outboxBox.appendChild(table(["ID", "Dest", "Status", "Attempts", "Next", "Last", "Error", "Event"], rows));
+        } catch (e) {
+          outboxBox.appendChild(el(`<div class="text-sm text-rose-700">${escapeHtml(e.message || String(e))}</div>`));
+        }
+
+        container.appendChild(outboxBox);
+
+        const replayBox = el(`<div class="rounded-xl border bg-white p-4 space-y-4"></div>`);
+        replayBox.appendChild(el(`<div class="text-sm font-semibold">Outbox Replay</div>`));
+
+        var replayStatus = input({ placeholder: "FAILED (or DEAD)", value: "FAILED" });
+        var replayDest = input({ placeholder: "destination (optional)", value: "" });
+        var replayMax = input({ placeholder: "max_messages", value: "100" });
+
+        replayBox.appendChild(el(`<div class="grid grid-cols-1 md:grid-cols-4 gap-3"></div>`));
+        const rg = replayBox.querySelector("div.grid");
+        rg.appendChild(field("Status", replayStatus));
+        rg.appendChild(field("Destination", replayDest));
+        rg.appendChild(field("Max messages", replayMax));
+        rg.appendChild(el(`<div class="md:pt-6 text-xs text-slate-500">Replay resets messages for re-dispatch.</div>`));
+
+        container.appendChild(replayBox);
+
+        const other = el(`<div class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>`);
+        container.appendChild(other);
+
+        const eventsBox = el(`<div class="space-y-2"></div>`);
+        eventsBox.appendChild(el(`<div class="text-sm font-semibold">Recent Domain Events</div>`));
+        try {
+          const ev = await api("/events", { query: { limit: 50, offset: 0 } });
+          const rows = ev.items.map((x) => [x.id, x.aggregate_type, x.aggregate_id, x.event_type, fmtDateTime(x.created_at)]);
+          eventsBox.appendChild(table(["ID", "AggType", "AggId", "Type", "Created"], rows));
+        } catch (e) {
+          eventsBox.appendChild(el(`<div class="text-sm text-rose-700">${escapeHtml(e.message || String(e))}</div>`));
+        }
+
+        const ledgerBox = el(`<div class="space-y-2"></div>`);
+        ledgerBox.appendChild(el(`<div class="text-sm font-semibold">Recent Ledger Entries</div>`));
+        try {
+          const led = await api("/ledger", { query: { limit: 50, offset: 0 } });
+          const rows = led.items.map((x) => [x.id, x.account_type, x.account_id, x.entry_type, fmtMoney(x.amount), x.txn_id, String(x.effective_date)]);
+          ledgerBox.appendChild(table(["ID", "Type", "Account", "Entry", "Amount", "Txn", "Eff"], rows));
+        } catch (e) {
+          ledgerBox.appendChild(el(`<div class="text-sm text-rose-700">${escapeHtml(e.message || String(e))}</div>`));
+        }
+
+        other.appendChild(eventsBox);
+        other.appendChild(ledgerBox);
+
+        return container;
+      }
+
+      async function render() {
+        navStyles();
+        appRoot.innerHTML = "";
+        const { path, params } = parseRoute();
+
+        try {
+          if (path === "/" || path === "") {
+            appRoot.appendChild(await renderDashboard());
+            return;
+          }
+
+          if (path === "/deposit") {
+            appRoot.appendChild(await renderDepositList(params));
+            return;
+          }
+
+          if (path === "/deposit/new") {
+            appRoot.appendChild(renderDepositCreate());
+            return;
+          }
+
+          if (path.startsWith("/deposit/")) {
+            const id = path.split("/")[2];
+            appRoot.appendChild(await renderDepositDetail(id));
+            return;
+          }
+
+          if (path === "/loan") {
+            appRoot.appendChild(await renderLoanList(params));
+            return;
+          }
+
+          if (path === "/loan/new") {
+            appRoot.appendChild(renderLoanCreate());
+            return;
+          }
+
+          if (path.startsWith("/loan/")) {
+            const id = path.split("/")[2];
+            appRoot.appendChild(await renderLoanDetail(id));
+            return;
+          }
+
+          if (path === "/integrations") {
+            appRoot.appendChild(await renderIntegrations(params));
+            return;
+          }
+
+          appRoot.appendChild(el(`<div class="rounded-xl border bg-white p-4">Not found</div>`));
+        } catch (e) {
+          appRoot.appendChild(el(`<div class="rounded-xl border bg-white p-4 text-sm text-rose-700">${escapeHtml(e.message || String(e))}</div>`));
+        }
+      }
+
+      window.addEventListener("hashchange", render);
+      render();
+    </script>
+  </body>
+</html>
